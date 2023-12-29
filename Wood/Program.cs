@@ -190,7 +190,8 @@ public class Creature : IGameObject
     public int Y { get; set; }
     public int Vx { get; set; }
     public int Vy { get; set; }
-    
+    public int TargetX => X + Vx;
+    public int TargetY => Y + Vy;
     public bool IsScanned { get; set; }
     
     public void Reset()
