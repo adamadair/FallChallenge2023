@@ -162,6 +162,8 @@ public class GameState
     public List<Drone> MyDrones { get; set; } = new List<Drone>();
     public List<Drone> FoeDrones { get; set; } = new List<Drone>();
     
+    public HashSet<int> MyScans { get; set; } = new HashSet<int>();
+    public HashSet<int> FoeScans { get; set; } = new HashSet<int>();
 }
 #endregion
 
@@ -192,12 +194,16 @@ public class Creature : IGameObject
     public int Vy { get; set; }
     public int TargetX => X + Vx;
     public int TargetY => Y + Vy;
-    public bool IsScanned { get; set; }
+    public bool IsScanned => IsScannedByMe || IsScannedByFoe;
+    
+    public bool IsScannedByMe { get; set; }
+    public bool IsScannedByFoe { get; set; }
     
     public void Reset()
     {
         IsVisible = false;
-        IsScanned = false;
+        IsScannedByFoe = false;
+        IsScannedByMe = false;
         X = -1;
         Y = -1;
         Vx = 0;
@@ -230,6 +236,8 @@ public class Action
     public int X { get; set; }
     public int Y { get; set; }
     public bool Light { get; set; }
+    
+    public string Message { get; set; }
     public override string ToString()
     {
         var l = Light ? 1 : 0;
@@ -237,9 +245,9 @@ public class Action
             return "Quit";
         }
         if (Type==ActionType.Wait){
-            return $"WAIT {l}";
+            return $"WAIT {l} {Message}";
         }
-        return $"MOVE {X} {Y} {l}";
+        return $"MOVE {X} {Y} {l} {Message}";
     }
 }
 #endregion
@@ -283,18 +291,22 @@ public class BotBrain
         string[] inputs;
         State.MyScore = int.Parse(NextLine());
         State.FoeScore = int.Parse(NextLine());
+        
         State.MyScanCount = int.Parse(NextLine());
         for (var i = 0; i < State.MyScanCount; i++)
         {
             var creatureId = int.Parse(NextLine());
+            State.MyScans.Add(creatureId);
         }
 
         State.FoeScanCount = int.Parse(NextLine());
         for (var i = 0; i < State.FoeScanCount; i++)
         {
             var creatureId = int.Parse(NextLine());
+            State.FoeScans.Add(creatureId);
         }
 
+        // Update my drones
         State.MyDrones.Clear();
         State.MyDroneCount = int.Parse(NextLine());
         for (var i = 0; i < State.MyDroneCount; i++)
@@ -311,9 +323,11 @@ public class BotBrain
                 X = droneX,
                 Y = droneY,
                 Emergency = emergency,
-                Battery = battery
+                Battery = battery,
             });
         }
+        
+        // Update foe drones
         State.FoeDrones.Clear();
         State.FoeDroneCount = int.Parse(NextLine());
         for (var i = 0; i < State.FoeDroneCount; i++)
@@ -359,6 +373,8 @@ public class BotBrain
                 creature.Y = creatureY;
                 creature.Vx = creatureVx;
                 creature.Vy = creatureVy;
+                creature.IsScannedByMe = State.MyScans.Contains(creatureId);
+                creature.IsScannedByFoe = State.FoeScans.Contains(creatureId);
             }
         }
         
@@ -388,6 +404,11 @@ public static class Extensions
     {
         return Math.Sqrt(Math.Pow(c1.X - c2.X, 2) + Math.Pow(c1.Y - c2.Y, 2));
     }
+    
+    public static double TargetDistance(this IGameObject c1, Creature c2)
+    {
+        return Math.Sqrt(Math.Pow(c1.X - c2.TargetX, 2) + Math.Pow(c1.Y - c2.TargetY, 2));
+    }
 }
 #endregion
 
@@ -400,17 +421,19 @@ public class WoodStrategy : IAiStrategy
         var actions = new List<Action>();
         foreach (var drone in state.MyDrones)
         {
-            var fish = state.Creatures.Where(c => c.IsVisible && !c.IsScanned).OrderBy(c => c.Distance(drone)).FirstOrDefault();
+            var fish = state.Creatures.Where(c => c.IsVisible && !c.IsScannedByMe).OrderBy(c => c.Distance(drone)).FirstOrDefault();
             if (fish != null)
             {
+                var d = drone.TargetDistance(fish);
+                var light = d - 600 < 2000 && drone.Battery >= 5;
                 actions.Add(new Action
                 {
                     Type = ActionType.Move,
-                    X = fish.X,
-                    Y = fish.Y,
-                    Light = true
+                    X = fish.TargetX,
+                    Y = fish.TargetY,
+                    Light = light,
+                    Message = $"Fish {fish.Id}"
                 });
-                fish.IsScanned = true;
             }
             else
             {
@@ -424,6 +447,4 @@ public class WoodStrategy : IAiStrategy
         }
         return actions.ToArray();
     }
-    
-    
 }
