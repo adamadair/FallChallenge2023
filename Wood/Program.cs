@@ -183,6 +183,16 @@ public class Drone : IGameObject
 // create creature state class
 public class Creature : IGameObject
 {
+    public const int TYPE_0_MIN_Y = 2500;
+    public const int TYPE_0_MAX_Y = 5000;
+    public const int TYPE_1_MIN_Y = 5000;
+    public const int TYPE_1_MAX_Y = 7500;
+    public const int TYPE_2_MIN_Y = 7500;
+    public const int TYPE_2_MAX_Y = 10000;
+    public const int TYPE_0_POINTS = 1; 
+    public const int TYPE_1_POINTS = 2;
+    public const int TYPE_2_POINTS = 3;
+    
     public int Id { get; set; }
     public int Color { get; set; }
     public int Type { get; set; }
@@ -209,6 +219,11 @@ public class Creature : IGameObject
         Vx = 0;
         Vy = 0;
     }
+    
+    public int MinY => Type == 0 ? TYPE_0_MIN_Y : Type == 1 ? TYPE_1_MIN_Y : TYPE_2_MIN_Y;
+    public int MaxY => Type == 0 ? TYPE_0_MAX_Y : Type == 1 ? TYPE_1_MAX_Y : TYPE_2_MAX_Y;
+    public int TypePoints => Type == 0 ? TYPE_0_POINTS : Type == 1 ? TYPE_1_POINTS : TYPE_2_POINTS;
+    public int Points => IsScanned ? TypePoints : TypePoints * 2;
 }
 #endregion
 
@@ -421,7 +436,10 @@ public class WoodStrategy : IAiStrategy
         var actions = new List<Action>();
         foreach (var drone in state.MyDrones)
         {
-            var fish = state.Creatures.Where(c => c.IsVisible && !c.IsScannedByMe).OrderBy(c => c.Distance(drone)).FirstOrDefault();
+            var fish = state.Creatures
+                .Where(c => c.IsVisible && !c.IsScannedByMe)
+                .MinBy(c => c.Distance(drone));
+            
             if (fish != null)
             {
                 var d = drone.TargetDistance(fish);
