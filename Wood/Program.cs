@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Linq;
 /**
@@ -158,7 +159,7 @@ public class GameState
     public int DroneScanCount { get; set; }
     public int VisibleCreatureCount { get; set; }
     public int RadarBlipCount { get; set; }
-    public List<Creature> Creatures { get; set; } = new List<Creature>();
+    public List<Creature?> Creatures { get; set; } = new List<Creature?>();
     public List<Drone> MyDrones { get; set; } = new List<Drone>();
     public List<Drone> FoeDrones { get; set; } = new List<Drone>();
     
@@ -168,15 +169,43 @@ public class GameState
 #endregion
 
 #region Drone
-// this is the drone state class
+// this is the drone state class, used to keep track of what the drone should be doing.
+public enum DroneState
+{
+    Idle,
+    Scanning,
+    Moving,
+    Returning,
+    Charging,
+    BeingAJerk
+}
 public class Drone : IGameObject
 {
+    public DroneState State { get; set; } = DroneState.Idle;
     public int Id { get; set; }
     public int X { get; set; }
     public int Y { get; set; }
     public int Emergency { get; set; }
     public int Battery { get; set; }
+
+    public List<RadarPing> Radar = new List<RadarPing>();
+    public RadarPing WhereIs(int creatureId) => Radar.FirstOrDefault(r => r.CreatureId == creatureId);
+ 
+    public List<int> Scans { get; set; } = new List<int>();
+    
+    public int CurrentTargetId { get; set; }
+    public string TargetDirection => CurrentTargetId < 0 ? "" : WhereIs(CurrentTargetId).Direction;
+
+    public int TargetType { get; set; } = -1;
 }
+
+public class RadarPing
+{
+    public int DroneId { get; set; }
+    public int CreatureId { get; set; }
+    public string Direction { get; set; }
+}
+
 #endregion
 
 #region Creature
@@ -224,16 +253,19 @@ public class Creature : IGameObject
     public int MaxY => Type == 0 ? TYPE_0_MAX_Y : Type == 1 ? TYPE_1_MAX_Y : TYPE_2_MAX_Y;
     public int TypePoints => Type == 0 ? TYPE_0_POINTS : Type == 1 ? TYPE_1_POINTS : TYPE_2_POINTS;
     public int Points => IsScanned ? TypePoints : TypePoints * 2;
-}
-#endregion
-
-#region RadarBlip
-// this is the radar blip state class
-public class RadarBlip
-{
-    public int DroneId { get; set; }
-    public int CreatureId { get; set; }
-    public string Radar { get; set; }
+    
+    public static int TypePointsFor(int type)
+    {
+        return type == 0 ? TYPE_0_POINTS : type == 1 ? TYPE_1_POINTS : TYPE_2_POINTS;
+    }
+    public static int TypeMinYFor(int type)
+    {
+        return type == 0 ? TYPE_0_MIN_Y : type == 1 ? TYPE_1_MIN_Y : TYPE_2_MIN_Y;
+    }
+    public static int TypeMaxYFor(int type)
+    {
+        return type == 0 ? TYPE_0_MAX_Y : type == 1 ? TYPE_1_MAX_Y : TYPE_2_MAX_Y;
+    }
 }
 #endregion
 
@@ -322,7 +354,6 @@ public class BotBrain
         }
 
         // Update my drones
-        State.MyDrones.Clear();
         State.MyDroneCount = int.Parse(NextLine());
         for (var i = 0; i < State.MyDroneCount; i++)
         {
@@ -332,18 +363,29 @@ public class BotBrain
             var droneY = int.Parse(inputs[2]);
             var emergency = int.Parse(inputs[3]);
             var battery = int.Parse(inputs[4]);
-            State.MyDrones.Add(new Drone
+            var drone = State.MyDrones.Find(d => d.Id == droneId);
+            if (drone != null)
             {
-                Id = droneId,
-                X = droneX,
-                Y = droneY,
-                Emergency = emergency,
-                Battery = battery,
-            });
+                drone.X = droneX;
+                drone.Y = droneY;
+                drone.Emergency = emergency;
+                drone.Battery = battery;
+            }
+            else
+            {
+                State.MyDrones.Add(new Drone
+                {
+                    Id = droneId,
+                    X = droneX,
+                    Y = droneY,
+                    Emergency = emergency,
+                    Battery = battery,
+                });
+            }
         }
         
         // Update foe drones
-        State.FoeDrones.Clear();
+        State.FoeDrones.Clear(); // At this time we are not storing any data about foe drones.
         State.FoeDroneCount = int.Parse(NextLine());
         for (var i = 0; i < State.FoeDroneCount; i++)
         {
@@ -359,7 +401,8 @@ public class BotBrain
                 X = droneX,
                 Y = droneY,
                 Emergency = emergency,
-                Battery = battery
+                Battery = battery,
+                State = DroneState.BeingAJerk
             });
         }
 
@@ -369,6 +412,19 @@ public class BotBrain
             inputs = NextLine().Split(' ');
             var droneId = int.Parse(inputs[0]);
             var creatureId = int.Parse(inputs[1]);
+            var drone = State.MyDrones.Find(d => d.Id == droneId);
+            if (drone != null)
+            {
+                drone.Scans.Add(creatureId);
+            }
+            else
+            {
+                drone = State.FoeDrones.Find(d => d.Id == droneId);
+                if (drone != null)
+                {
+                    drone.Scans.Add(creatureId);
+                }
+            }
         }
 
         State.VisibleCreatureCount = int.Parse(NextLine());
@@ -400,6 +456,16 @@ public class BotBrain
             var droneId = int.Parse(inputs[0]);
             var creatureId = int.Parse(inputs[1]);
             var radar = inputs[2];
+            var drone = State.MyDrones.Find(d => d.Id == droneId);
+            if (drone != null)
+            {
+                drone.Radar.Add(new RadarPing
+                {
+                    DroneId = droneId,
+                    CreatureId = creatureId,
+                    Direction = radar
+                });
+            }
         }
     }
 
@@ -411,6 +477,18 @@ public class BotBrain
 }
 #endregion
 
+#region Globals
+public static class Globals
+{
+    public const int Width = 10000;
+    public const int Height = 10000;
+    public const int MaxDroneSpeed = 600;
+    public const int MaxDroneLight = 2000;
+    public const int MinDroneLight = 800;
+    public const int MaxDroneBattery = 30;
+}
+
+#endregion
 #region Extensions
 // this is the extensions class
 public static class Extensions
@@ -427,42 +505,326 @@ public static class Extensions
 }
 #endregion
 
+#region Game Map classes
+
+public struct Coordinate
+{
+    public int X { get; set; }
+    public int Y { get; set; }
+}
+
+/// <summary>
+/// GameMap is a utility class to assist with map calculations.
+/// </summary>
+public class GameMap
+{
+    public int Width { get; set; }
+    public int Height { get; set; }
+    public int[,] Map { get; set; }
+
+    private readonly int _cellSize;
+    private readonly int _border;
+    
+    public GameMap(int width = Globals.Width, int height = Globals.Height, int cellSize = 1600, int border = 200)
+    {
+
+        Width = (width - (2 * border)) / cellSize;
+        Height = (height - (2 * border)) / cellSize;
+        Map = new int[width, height];
+        this._cellSize = cellSize;
+        this._border = border;
+    }
+    
+    public void Clear()
+    {
+        for (var x = 0; x < Width; x++)
+        {
+            for (var y = 0; y < Height; y++)
+            {
+                Map[x, y] = 0;
+            }
+        }
+    }
+
+    public Coordinate GetCellCenter(int x, int y)
+    {
+        return new Coordinate
+        {
+            X = (x * _cellSize) + _border + (_cellSize / 2),
+            Y = (y * _cellSize) + _border + (_cellSize / 2)
+        };
+    }
+    
+    public int GetCellX(int x)
+    {
+        return (x - _border) / _cellSize;
+    }
+    
+    public int GetCellY(int y)
+    {
+        return (y - _border) / _cellSize;
+    }
+    
+    public Coordinate GetCell(int x, int y)
+    {
+        return new Coordinate
+        {
+            X = (x - _border) / _cellSize,
+            Y = (y - _border) / _cellSize
+        };
+    }
+    
+    public void Visit(int x, int y)
+    {
+        Map[x, y]++;
+    }
+    
+    public void Visit(Coordinate c)
+    {
+        Map[c.X, c.Y]++;
+    }
+    
+    public void Visit(IGameObject c)
+    {
+        Map[GetCellX(c.X), GetCellY(c.Y)]++;
+    }
+    
+    public int GetVisits(int x, int y)
+    {
+        return Map[x, y];
+    }
+    
+    public int GetVisits(Coordinate c)
+    {
+        return Map[c.X, c.Y];
+    }
+    
+    public int GetVisits(IGameObject c)
+    {
+        return Map[GetCellX(c.X), GetCellY(c.Y)];
+    }
+    
+    public bool Visited(int x, int y)
+    {
+        return Map[x, y] > 0;
+    }
+}
+
+#endregion
+
 public class WoodStrategy : IAiStrategy
 {
     public string Name => "Wood";
-    
+    private GameMap _map = new GameMap();
+    private GameState _state;
+    private List<Action> _actions = new List<Action>();
     public Action[] GetActions(GameState state)
     {
-        var actions = new List<Action>();
+        _actions.Clear();
+        _state = state;
         foreach (var drone in state.MyDrones)
         {
-            var fish = state.Creatures
-                .Where(c => c.IsVisible && !c.IsScannedByMe)
-                .MinBy(c => c.Distance(drone));
-            
-            if (fish != null)
-            {
-                var d = drone.TargetDistance(fish);
-                var light = d - 600 < 2000 && drone.Battery >= 5;
-                actions.Add(new Action
-                {
-                    Type = ActionType.Move,
-                    X = fish.TargetX,
-                    Y = fish.TargetY,
-                    Light = light,
-                    Message = $"Fish {fish.Id}"
-                });
-            }
-            else
-            {
-                actions.Add(new Action
-                {
-                    Type = ActionType.Wait,
-                    Light = false
-                });
-            }
-
+            PerformDroneAction(drone);
         }
-        return actions.ToArray();
+        return _actions.ToArray();
+    }
+
+    private void AddMoveAction(int x, int y, bool light, string message)
+    {
+        _actions.Add(new Action
+        {
+            Type = ActionType.Move,
+            X = x,
+            Y = y,
+            Light = light,
+            Message = message
+        });
+    }
+    
+    private void PerformDroneAction(Drone drone)
+    {
+        switch (drone.State)
+        {
+            case DroneState.Idle:
+                HandleIdle(drone);
+                break;
+            case DroneState.Scanning:
+                HandleScanning(drone);
+                break;
+            case DroneState.Moving:
+                HandleMoving(drone);
+                break;
+            case DroneState.Returning:
+                HandleReturn(drone);
+                break;
+            case DroneState.Charging:
+                HandleCharging(drone);
+                break;
+            case DroneState.BeingAJerk:
+                HandleBeingAJerk(drone);
+                break;
+            default:
+                throw new ArgumentOutOfRangeException();
+        }
+    }
+    
+    private void HandleReturn(Drone drone)
+    {
+        if (drone.Y <= 500)
+        {
+            // return is complete
+            drone.State = DroneState.Idle;
+            HandleIdle(drone);    
+        }
+        else
+        {
+            AddMoveAction(drone.X, 450, false, "Surfacing!");       
+        }
+    }
+
+    // find a drone their next target type and target instance
+    private void HandleIdle(Drone drone)
+    {
+        if (drone.TargetType < 0)
+        {
+            drone.TargetType = 2;
+        }
+        else
+        {
+            drone.TargetType--;
+        }
+        if (drone.TargetType < 0)
+        {
+            _actions.Add(new Action{
+                Type = ActionType.Wait,
+                Light = false,
+                Message = "Unable to find a target!!!"
+            });
+            return;
+        }
+        var target = GetNextUnscannedTarget(drone.TargetType);
+        if(target == null){
+            drone.TargetType--;
+            HandleIdle(drone);
+            return;
+        }
+
+        drone.CurrentTargetId = target.Id;
+        drone.State = DroneState.Moving;
+        HandleMoving(drone);            
+    }
+    
+    private Creature? GetNextUnscannedTarget(int type) =>
+        _state.Creatures.FirstOrDefault(creature =>
+            creature != null && creature.Type == type && !IsScanned(creature));
+
+    private void HandleBeingAJerk(Drone drone)
+    {
+        _actions.Add(new Action{
+            Type = ActionType.Wait,
+            Light = false,
+            Message = "Being a jerk"
+        });
+        drone.State = DroneState.Idle;
+    }
+
+    // move to the correct layer
+    private void HandleMoving(Drone drone)
+    {
+        var target = _state.Creatures.Find(c => c.Id == drone.CurrentTargetId);
+        if (target == null)
+        {
+            drone.State = DroneState.Idle;
+            drone.TargetType++;
+            HandleIdle(drone);
+            return;
+        }
+        if (drone.Y < target.MinY)
+        {
+            AddMoveAction(drone.X, target.MinY + 800, false, $"Moving to layer {target.Type}");    
+        }
+        else
+        {
+            // we have arrived at the correct layer
+            drone.State = DroneState.Scanning;
+            HandleScanning(drone);
+        }
+    }
+    
+    private bool IsScanned(Creature? target)
+    {
+        if(_state.MyScans.Contains(target.Id)){
+            return true;
+        }
+        return _state.MyDrones.Any(drone => drone.Scans.Contains(target.Id));
+    }
+    
+    // scan the target
+    private void HandleScanning(Drone drone)
+    {
+        var target = _state.Creatures.Find(c => c.Id == drone.CurrentTargetId);
+        
+        if (target == null)
+        {
+            drone.State = DroneState.Idle;
+            HandleIdle(drone);
+            return;
+        }
+        if (IsScanned(target))
+        {
+            // get next target at this layer
+            target = GetNextUnscannedTarget(drone.TargetType);
+            if(target == null)
+            {
+                drone.State = DroneState.Returning;
+                HandleReturn(drone);
+                return;
+            }
+            drone.CurrentTargetId = target.Id;
+        }
+        var direction = drone.TargetDirection;
+        var dx = 0;
+        var y = target.MinY;
+        var light = drone.Battery >= 5;
+        switch (direction)
+        {
+            case "TL":
+                dx = -Globals.MaxDroneSpeed;
+                y = target.MinY + 800;
+                break;
+            case "TR":
+                dx = Globals.MaxDroneSpeed;
+                y = target.MinY + 800;
+                break;
+            case "BL":
+                dx = -Globals.MaxDroneSpeed;
+                y = target.MaxY - 800;
+                break;
+            case "BR":
+                dx = Globals.MaxDroneSpeed;
+                y = target.MaxY - 800;
+                break;
+        }
+        AddMoveAction(drone.X + dx, y, light, $"Scanning for {target.Id}");
+    }
+
+    /// <summary>
+    /// handle charging the drone, once drone is charged return to scanning
+    /// </summary>
+    /// <param name="drone">drone to charge</param>
+    private void HandleCharging(Drone drone)
+    {
+        if (drone.Battery <= Globals.MaxDroneBattery)
+        {
+            _actions.Add(new Action
+            {
+                Type = ActionType.Wait,
+                Light = false,
+                Message = "Charging"
+            });
+            return;
+        }
+        drone.State = DroneState.Scanning;
+        HandleScanning(drone);
     }
 }
